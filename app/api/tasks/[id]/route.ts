@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { createServiceClient } from "@/lib/supabase";
 import { recalcTaskScore } from "@/lib/scoring";
-import type { ApiResponse, Task } from "@/types";
+import type { ApiResponse, Task, Subtask } from "@/types";
+
+type SubtaskInput = Pick<Subtask, "name" | "estimatedMinutes" | "isDelegatable" | "dependsOnOthers"> & {
+  isCompleted?: boolean;
+};
+
+interface PatchTaskBody extends Omit<Partial<Task>, "subtasks"> {
+  subtasks?: SubtaskInput[];
+}
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -17,7 +25,7 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  const body = await req.json() as Partial<Task>;
+  const body = await req.json() as PatchTaskBody;
 
   const db = createServiceClient();
 
@@ -59,11 +67,35 @@ export async function PATCH(
   };
   updateData.score = recalcTaskScore(merged);
 
-  const { data, error } = await db
+  const { error: updateError } = await db
     .from("tasks")
     .update(updateData)
-    .eq("id", id)
+    .eq("id", id);
+
+  if (updateError) {
+    return NextResponse.json({ success: false, error: updateError.message }, { status: 500 });
+  }
+
+  // サブタスクの更新（指定された場合のみ）
+  if (body.subtasks !== undefined) {
+    await db.from("subtasks").delete().eq("task_id", id);
+    if (body.subtasks.length > 0) {
+      const subtaskRows = body.subtasks.map((s) => ({
+        task_id: id,
+        name: s.name,
+        estimated_minutes: s.estimatedMinutes,
+        is_delegatable: s.isDelegatable,
+        depends_on_others: s.dependsOnOthers,
+        is_completed: s.isCompleted ?? false,
+      }));
+      await db.from("subtasks").insert(subtaskRows);
+    }
+  }
+
+  const { data, error } = await db
+    .from("tasks")
     .select("*, subtasks(*)")
+    .eq("id", id)
     .single();
 
   if (error) {
