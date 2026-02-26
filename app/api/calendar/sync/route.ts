@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { fetchCalendarEvents, createEmptySyncResult } from "@/lib/gcal";
+import { fetchCalendarEvents, createCalendarEvent, createEmptySyncResult } from "@/lib/gcal";
 import { createServiceClient } from "@/lib/supabase";
 import type { ApiResponse, CalendarSyncResult } from "@/types";
 
@@ -52,6 +52,41 @@ export async function POST(): Promise<NextResponse<ApiResponse<CalendarSyncResul
         score: 0,
       });
       result.imported++;
+    }
+  }
+
+  // App → GCal エクスポート
+  // scheduled_start/end があり、gcal_event_id がなく、is_locked=false のタスクを書き出す
+  const { data: exportCandidates, error: exportQueryError } = await db
+    .from("tasks")
+    .select("id, name, notes, scheduled_start, scheduled_end")
+    .eq("user_id", session.user!.email)
+    .eq("is_locked", false)
+    .not("scheduled_start", "is", null)
+    .not("scheduled_end", "is", null)
+    .is("gcal_event_id", null);
+
+  if (!exportQueryError && exportCandidates) {
+    for (const task of exportCandidates) {
+      try {
+        const eventId = await createCalendarEvent(
+          session.accessToken,
+          "primary",
+          {
+            summary: task.name as string,
+            description: (task.notes as string | null) ?? undefined,
+            start: new Date(task.scheduled_start as string),
+            end: new Date(task.scheduled_end as string),
+          }
+        );
+        await db
+          .from("tasks")
+          .update({ gcal_event_id: eventId })
+          .eq("id", task.id as string);
+        result.exported++;
+      } catch {
+        // 個別失敗はスキップ（他のエクスポートをブロックしない）
+      }
     }
   }
 
