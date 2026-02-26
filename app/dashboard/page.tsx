@@ -1,26 +1,10 @@
-import dynamic from "next/dynamic";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { createServiceClient } from "@/lib/supabase";
 import type { UITask, UISubtask } from "@/lib/api-client";
 import type { BallHolder } from "@/types";
-
-// dnd-kit は SSR で aria-describedby の連番 ID がサーバー/クライアントで
-// ずれて Hydration エラーになるため ssr: false で回避する
-const DashboardShell = dynamic(
-  () =>
-    import("@/components/dashboard/DashboardShell").then(
-      (m) => m.DashboardShell
-    ),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-        読み込み中…
-      </div>
-    ),
-  }
-);
+// ssr:false は Server Component 内で使用不可なため Client Component ラッパーを使用
+import { DashboardShellDynamic as DashboardShell } from "@/components/dashboard/DashboardShellDynamic";
 
 // Supabase の snake_case レスポンスを UITask に変換（サーバーサイド用）
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
