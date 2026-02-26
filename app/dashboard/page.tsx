@@ -1,47 +1,50 @@
+import dynamic from "next/dynamic";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { createServiceClient } from "@/lib/supabase";
+import { sortTasksByScore } from "@/lib/scoring";
+import { mapTaskRow } from "@/lib/mappers";
+// dnd-kit は SSR で aria-describedby の連番 ID がサーバー/クライアントで
+// ずれて Hydration エラーになるため ssr: false で回避する
+const DashboardClient = dynamic(
+  () => import("@/components/dashboard/DashboardClient"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-screen items-center justify-center text-muted-foreground text-sm">
+        読み込み中…
+      </div>
+    ),
+  }
+);
 
 export default async function DashboardPage() {
   const session = await auth();
-  if (!session) redirect("/signin");
+  if (!session?.user?.email) redirect("/signin");
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("tasks")
+    .select("*, subtasks(*)")
+    .eq("user_id", session.user.email)
+    .order("score", { ascending: false });
+
+  if (error) {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="text-red-500">タスクの読み込みに失敗しました: {error.message}</p>
+      </main>
+    );
+  }
+
+  const tasks = (data ?? []).map((row) => mapTaskRow(row as Record<string, unknown>));
+  const { activeTasks, waitingTasks } = sortTasksByScore(tasks);
 
   return (
-    <main className="min-h-screen p-6">
-      <header className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">FluxWork</h1>
-        <span className="text-sm text-muted-foreground">{session.user?.email}</span>
-      </header>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-        {/* タイムライン（PC版） */}
-        <section className="rounded-lg border p-4">
-          <h2 className="mb-4 font-semibold">タイムライン</h2>
-          <p className="text-sm text-muted-foreground">
-            タスクをここにドラッグ&ドロップして配置します（実装予定）
-          </p>
-        </section>
-
-        {/* サイドパネル */}
-        <div className="space-y-4">
-          {/* タスクリスト */}
-          <section className="rounded-lg border p-4">
-            <h2 className="mb-4 font-semibold">タスクリスト</h2>
-            <p className="text-sm text-muted-foreground">
-              スコア順のタスクが表示されます（実装予定）
-            </p>
-          </section>
-
-          {/* ウェイティングレーン */}
-          <section className="rounded-lg border border-dashed p-4">
-            <h2 className="mb-4 font-semibold text-muted-foreground">
-              ウェイティングレーン
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              他者待ちのタスクが表示されます（実装予定）
-            </p>
-          </section>
-        </div>
-      </div>
-    </main>
+    <DashboardClient
+      initialActiveTasks={activeTasks}
+      initialWaitingTasks={waitingTasks}
+      userEmail={session.user.email}
+    />
   );
 }

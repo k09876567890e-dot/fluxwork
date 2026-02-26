@@ -2,7 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { createServiceClient } from "@/lib/supabase";
 import { recalcTaskScore } from "@/lib/scoring";
-import type { ApiResponse, Task } from "@/types";
+import type { ApiResponse, Task, Subtask } from "@/types";
+
+type SubtaskInput = Pick<Subtask, "name" | "estimatedMinutes" | "isDelegatable" | "dependsOnOthers">;
+
+interface CreateTaskBody {
+  name: string;
+  deadline: string;
+  notes?: string;
+  estimatedMinutes: number;
+  leadTimeMinutes: number;
+  ballHolder: 0 | 1;
+  subtasks?: SubtaskInput[];
+}
 
 // GET /api/tasks — ユーザーのタスク一覧を取得
 export async function GET(): Promise<NextResponse<ApiResponse<Task[]>>> {
@@ -32,8 +44,8 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<T
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json() as Partial<Task>;
-  const { name, deadline, notes, estimatedMinutes, leadTimeMinutes, ballHolder } = body;
+  const body = await req.json() as CreateTaskBody;
+  const { name, deadline, notes, estimatedMinutes, leadTimeMinutes, ballHolder, subtasks } = body;
 
   if (!name || !deadline || estimatedMinutes == null || leadTimeMinutes == null || ballHolder == null) {
     return NextResponse.json(
@@ -50,7 +62,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<T
   });
 
   const db = createServiceClient();
-  const { data, error } = await db
+  const { data: task, error } = await db
     .from("tasks")
     .insert({
       user_id: session.user.email,
@@ -63,11 +75,35 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<T
       score,
       is_locked: false,
     })
-    .select("*, subtasks(*)")
+    .select("*")
     .single();
 
-  if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  if (error || !task) {
+    return NextResponse.json({ success: false, error: error?.message ?? "Insert failed" }, { status: 500 });
+  }
+
+  // サブタスクの挿入
+  if (subtasks && subtasks.length > 0) {
+    const subtaskRows = subtasks.map((s) => ({
+      task_id: task.id as string,
+      name: s.name,
+      estimated_minutes: s.estimatedMinutes,
+      is_delegatable: s.isDelegatable,
+      depends_on_others: s.dependsOnOthers,
+      is_completed: false,
+    }));
+    await db.from("subtasks").insert(subtaskRows);
+  }
+
+  // サブタスク込みで再取得
+  const { data, error: fetchError } = await db
+    .from("tasks")
+    .select("*, subtasks(*)")
+    .eq("id", task.id as string)
+    .single();
+
+  if (fetchError) {
+    return NextResponse.json({ success: false, error: fetchError.message }, { status: 500 });
   }
 
   return NextResponse.json({ success: true, data }, { status: 201 });
