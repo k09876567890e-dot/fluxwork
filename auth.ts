@@ -2,8 +2,12 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // localhost で state cookie が正しく読めるよう明示的に設定
+  trustHost: true,
+  debug: process.env.NODE_ENV === "development",
   pages: {
     signIn: "/signin",
+    error: "/auth-error",
   },
   providers: [
     Google({
