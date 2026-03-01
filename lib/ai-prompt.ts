@@ -26,7 +26,7 @@ const SYSTEM_PROMPT = `あなたは業務タスク分解の専門家です。
 - 出力はJSONのみ。説明文・マークダウン記法は不要`;
 
 const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash-preview-04-17",
+  model: "gemini-2.5-flash",
   systemInstruction: SYSTEM_PROMPT,
   generationConfig: {
     responseMimeType: "application/json",
